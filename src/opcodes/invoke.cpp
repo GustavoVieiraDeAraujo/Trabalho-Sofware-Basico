@@ -35,6 +35,33 @@ static int count_params(const std::string &desc) {
 }
 
 /**
+ * @brief Descarta os argumentos de uma chamada nao resolvida e empurra um
+ * valor de retorno neutro, mantendo a operand stack balanceada.
+ *
+ * @details Quando a classe ou o metodo de uma chamada invoke* nao e
+ * encontrado (tipicamente por pertencer a biblioteca padrao Java, que este
+ * projeto nao implementa), a chamada nao pode ser executada. Sem esta
+ * limpeza, os slots de argumento (e 'this') permaneceriam na pilha do
+ * chamador, dessincronizando-a das instrucoes seguintes e levando a leituras
+ * invalidas — inclusive segfaults — mais adiante na execucao. A funcao
+ * remove os `nargs` slots que a chamada consumiria e, se o metodo nao for
+ * void, empurra um valor de retorno neutro (0) do tamanho correto (2 slots
+ * para long/double, 1 para os demais tipos).
+ *
+ * @param frame  Frame chamador; argumentos sao retirados daqui.
+ * @param nargs  Numero de slots a descartar (parametros + 'this', se houver).
+ * @param desc   Descriptor do metodo; usado para determinar o tipo de retorno.
+ */
+static void discard_unresolved_call(Frame *frame, int nargs, const std::string &desc) {
+    for (int i = 0; i < nargs; i++) frame_pop(frame);
+
+    size_t rp = desc.find(')');
+    char ret = (rp != std::string::npos && rp + 1 < desc.size()) ? desc[rp + 1] : 'V';
+    if (ret == 'J' || ret == 'D') { frame_push(frame, 0); frame_push(frame, 0); }
+    else if (ret != 'V') frame_push(frame, 0);
+}
+
+/**
  * @brief Simula chamadas a java.io.PrintStream.println e .print via stdout.
  *
  * @details Como o JRE nao e carregado, este handler intercepta invocacoes
@@ -213,11 +240,19 @@ void op_invokestatic(JVM *jvm, Frame *frame) {
 
     /* Simula metodos estaticos conhecidos (ex: valueOf) */
     ClassEntry *ce = auto_load_class(jvm, cls);
-    if (!ce) { fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str()); return; }
+    if (!ce) {
+        fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str());
+        discard_unresolved_call(frame, count_params(mdesc), mdesc);
+        return;
+    }
 
     ClassEntry *decl = NULL;
     method_info *m = find_method_ex(ce, mname, mdesc, &decl);
-    if (!m) { fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", cls.c_str(), mname.c_str(), mdesc.c_str()); return; }
+    if (!m) {
+        fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", cls.c_str(), mname.c_str(), mdesc.c_str());
+        discard_unresolved_call(frame, count_params(mdesc), mdesc);
+        return;
+    }
 
     invoke_method(jvm, frame, m, decl ? decl : ce, false, mdesc);
 }
@@ -261,7 +296,11 @@ void op_invokespecial(JVM *jvm, Frame *frame) {
     }
 
     ClassEntry *ce = auto_load_class(jvm, cls);
-    if (!ce) { fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str()); return; }
+    if (!ce) {
+        fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str());
+        discard_unresolved_call(frame, count_params(mdesc) + 1, mdesc);
+        return;
+    }
 
     ClassEntry *decl = NULL;
     method_info *m = find_method_ex(ce, mname, mdesc, &decl);
@@ -273,6 +312,7 @@ void op_invokespecial(JVM *jvm, Frame *frame) {
         } else {
             fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n",
                     cls.c_str(), mname.c_str(), mdesc.c_str());
+            discard_unresolved_call(frame, count_params(mdesc) + 1, mdesc);
         }
         return;
     }
@@ -327,12 +367,20 @@ void op_invokevirtual(JVM *jvm, Frame *frame) {
     JObject *obj = heap_get_object(jvm, ref);
 
     ClassEntry *ce = obj ? obj->klass : auto_load_class(jvm, cls);
-    if (!ce) { fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str()); return; }
+    if (!ce) {
+        fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str());
+        discard_unresolved_call(frame, nparams + 1, mdesc);
+        return;
+    }
 
     /* Busca o metodo e a classe que o declara (para CP correto no frame) */
     ClassEntry *decl = NULL;
     method_info *m = find_method_ex(ce, mname, mdesc, &decl);
-    if (!m) { fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", ce->name.c_str(), mname.c_str(), mdesc.c_str()); return; }
+    if (!m) {
+        fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", ce->name.c_str(), mname.c_str(), mdesc.c_str());
+        discard_unresolved_call(frame, nparams + 1, mdesc);
+        return;
+    }
 
     invoke_method(jvm, frame, m, decl ? decl : ce, true, mdesc);
 }
@@ -375,10 +423,18 @@ void op_invokeinterface(JVM *jvm, Frame *frame) {
     JObject *obj = heap_get_object(jvm, ref);
 
     ClassEntry *ce = obj ? obj->klass : auto_load_class(jvm, cls);
-    if (!ce) { fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str()); return; }
+    if (!ce) {
+        fprintf(stderr,"Classe nao encontrada: %s\n", cls.c_str());
+        discard_unresolved_call(frame, nparams + 1, mdesc);
+        return;
+    }
 
     method_info *m = find_method(ce, mname, mdesc);
-    if (!m) { fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", ce->name.c_str(), mname.c_str(), mdesc.c_str()); return; }
+    if (!m) {
+        fprintf(stderr,"Metodo nao encontrado: %s.%s%s\n", ce->name.c_str(), mname.c_str(), mdesc.c_str());
+        discard_unresolved_call(frame, nparams + 1, mdesc);
+        return;
+    }
 
     invoke_method(jvm, frame, m, ce, true, mdesc);
 }
