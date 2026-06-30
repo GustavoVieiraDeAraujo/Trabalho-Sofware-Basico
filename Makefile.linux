@@ -1,7 +1,7 @@
 CXX    = g++
 CFLAGS = -std=c++11 -Wall -Wextra -Wpedantic -g
 IFLAGS = -I include
-TARGET = build/jvm.exe
+TARGET = build/jvm
 OUTDIR = output
 
 SRCS = src/main.cpp \
