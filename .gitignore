@@ -1,0 +1,10 @@
+# compilados
+build/
+
+# documentação gerada
+docs/html/
+docs/latex/
+
+# arquivos de objeto
+*.o
+*.exe

@@ -1,0 +1,101 @@
+CXX    = g++
+CFLAGS = -std=c++11 -Wall -Wextra -Wpedantic -g
+IFLAGS = -I include
+TARGET = build/jvm.exe
+OUTDIR = output
+
+SRCS = src/main.cpp \
+       src/opcodes.cpp \
+       src/class_reader.cpp \
+       src/constant_pool.cpp \
+       src/attributes.cpp \
+       src/displayer.cpp \
+       src/frame.cpp \
+       src/jvm_stack.cpp \
+       src/object.cpp \
+       src/array.cpp \
+       src/method_area.cpp \
+       src/interpreter.cpp \
+       src/opcodes/arithmetic.cpp \
+       src/opcodes/load_store.cpp \
+       src/opcodes/stack_ops.cpp \
+       src/opcodes/control.cpp \
+       src/opcodes/invoke.cpp \
+       src/opcodes/field_ops.cpp \
+       src/opcodes/object_ops.cpp \
+       src/opcodes/array_ops.cpp \
+       src/opcodes/convert.cpp \
+       src/opcodes/exceptions.cpp
+
+OBJS = $(patsubst src/%.cpp, build/%.o, $(SRCS))
+
+all: dirs $(TARGET)
+
+dirs:
+	@mkdir -p build/opcodes
+
+$(TARGET): $(OBJS)
+	$(CXX) $(CFLAGS) $(IFLAGS) $^ -o $@
+
+build/%.o: src/%.cpp
+	$(CXX) $(CFLAGS) $(IFLAGS) -c $< -o $@
+
+display: all
+	./$(TARGET) -d tests/class/$(CLASS).class
+
+# Gera um .txt por arquivo .class em output/
+output: all
+	@mkdir -p $(OUTDIR)
+	@for f in tests/class/*.class; do \
+		name=$$(basename $$f .class); \
+		./$(TARGET) -d -o $(OUTDIR)/$$name.txt $$f \
+		&& echo "Gerado: $(OUTDIR)/$$name.txt" \
+		|| echo "ERRO: $$f"; \
+	done
+
+# Gera output/<nome>.txt para cada .class E concatena tudo em output/all.txt
+output-all: output
+	@rm -f $(OUTDIR)/all.txt
+	@cat $(OUTDIR)/*.txt > $(OUTDIR)/all.txt
+	@echo "Gerado: $(OUTDIR)/all.txt"
+
+run: all
+	./$(TARGET) tests/class/$(CLASS).class
+
+run-all: all
+	@for f in tests/class/*.class; do \
+		echo "Executando: $$f"; \
+		./$(TARGET) $$f; \
+		echo ""; \
+	done
+
+test: all
+	@for f in tests/class/*.class; do \
+		./$(TARGET) $$f > /dev/null 2>&1 \
+		&& echo "PASS $$f" \
+		|| echo "FAIL $$f"; \
+	done
+
+check:
+	cppcheck --enable=all --language=c++ \
+	  --suppress=missingIncludeSystem \
+	  -I include src/
+
+sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
+sanitize: clean all
+
+docs:
+	doxygen Doxyfile
+
+clean:
+	rm -rf build
+
+clean-docs:
+	rm -rf docs/html
+
+clean-output:
+	rm -rf output
+
+clean-all: clean clean-docs clean-output
+
+.PHONY: all dirs display output output-all run run-all test check sanitize docs clean clean-docs clean-output clean-all
